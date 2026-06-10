@@ -1,4 +1,3 @@
-```kql
 // Phishing Investigation Queries
 // Purpose: Run each section separately during a phishing/email investigation.
 // Platform: Microsoft Defender XDR Advanced Hunting
