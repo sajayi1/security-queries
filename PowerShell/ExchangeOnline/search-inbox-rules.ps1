@@ -1,4 +1,3 @@
-```powershell
 <#
 .SYNOPSIS
 Inbox rule investigation commands for Exchange Online.
