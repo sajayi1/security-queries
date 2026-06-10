@@ -6,10 +6,7 @@ This repository contains KQL queries and PowerShell scripts used for security op
 
 - Phishing investigation
 - Identity and sign-in analysis
-- Endpoint security review
-- Microsoft Purview DLP monitoring
 - Exchange Online forwarding checks
-- Active Directory security checks
 
 ## Disclaimer
 
