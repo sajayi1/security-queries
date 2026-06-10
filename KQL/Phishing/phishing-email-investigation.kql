@@ -1,0 +1,189 @@
+```kql
+// Phishing Investigation Queries
+// Purpose: Run each section separately during a phishing/email investigation.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Replace the placeholder values before running.
+
+// ==========================================================
+// Query 1: Find related phishing emails
+// ==========================================================
+
+let startTime = ago(7d);
+let endTime = now();
+let targetUser = "user@domain.com";
+let senderDomain = "example.com";
+
+EmailEvents
+| where Timestamp between (startTime .. endTime)
+| where RecipientEmailAddress =~ targetUser
+   or SenderFromDomain =~ senderDomain
+   or SenderMailFromDomain =~ senderDomain
+   or SenderFromAddress has senderDomain
+| project Timestamp,
+          NetworkMessageId,
+          InternetMessageId,
+          SenderFromAddress,
+          SenderMailFromAddress,
+          SenderFromDomain,
+          RecipientEmailAddress,
+          Subject,
+          DeliveryAction,
+          DeliveryLocation,
+          ThreatTypes,
+          DetectionMethods,
+          AuthenticationDetails
+| order by Timestamp desc
+```
+
+```kql
+// ==========================================================
+// Query 2: Find URLs related to the sender domain
+// ==========================================================
+
+let senderDomain = "example.com";
+
+EmailUrlInfo
+| where Url has senderDomain
+   or UrlDomain has senderDomain
+| project NetworkMessageId,
+          Url,
+          UrlDomain
+| order by UrlDomain asc
+```
+
+```kql
+// ==========================================================
+// Query 3: Find attachments related to email messages
+// Note: Use NetworkMessageId from Query 1 if you want to filter further.
+// ==========================================================
+
+EmailAttachmentInfo
+| project Timestamp,
+          NetworkMessageId,
+          FileName,
+          FileType,
+          SHA256,
+          ThreatTypes
+| order by Timestamp desc
+```
+
+```kql
+// ==========================================================
+// Query 4: Check if the user clicked a suspicious URL
+// ==========================================================
+
+let startTime = ago(7d);
+let endTime = now();
+let targetUser = "user@domain.com";
+let targetIP = "10.0.0.1";
+let senderDomain = "example.com";
+
+UrlClickEvents
+| where Timestamp between (startTime .. endTime)
+| where AccountUpn =~ targetUser
+   or IPAddress == targetIP
+   or Url has senderDomain
+| project Timestamp,
+          NetworkMessageId,
+          AccountUpn,
+          IPAddress,
+          Url,
+          ActionType,
+          IsClickedThrough
+| order by Timestamp desc
+```
+
+```kql
+// ==========================================================
+// Query 5: Full correlation query
+// Purpose: Correlates emails, URLs, attachments, and clicks together.
+// ==========================================================
+
+let startTime = ago(7d);
+let endTime = now();
+
+let targetUser = "user@domain.com";
+let senderDomain = "example.com";
+let targetIP = "10.0.0.1";
+
+let PhishEmails =
+EmailEvents
+| where Timestamp between (startTime .. endTime)
+| where RecipientEmailAddress =~ targetUser
+   or SenderFromDomain =~ senderDomain
+   or SenderMailFromDomain =~ senderDomain
+   or SenderFromAddress has senderDomain
+| project EmailTime = Timestamp,
+          NetworkMessageId,
+          InternetMessageId,
+          SenderFromAddress,
+          SenderMailFromAddress,
+          SenderFromDomain,
+          RecipientEmailAddress,
+          Subject,
+          DeliveryAction,
+          DeliveryLocation,
+          EmailThreatTypes = ThreatTypes,
+          DetectionMethods,
+          AuthenticationDetails;
+
+let Urls =
+EmailUrlInfo
+| where Url has senderDomain
+   or UrlDomain has senderDomain
+| project NetworkMessageId,
+          Url,
+          UrlDomain;
+
+let Attachments =
+EmailAttachmentInfo
+| project NetworkMessageId,
+          FileName,
+          FileType,
+          SHA256,
+          AttachmentThreatTypes = ThreatTypes;
+
+let Clicks =
+UrlClickEvents
+| where Timestamp between (startTime .. endTime)
+| where AccountUpn =~ targetUser
+   or IPAddress == targetIP
+   or Url has senderDomain
+| project ClickTime = Timestamp,
+          NetworkMessageId,
+          AccountUpn,
+          IPAddress,
+          Url,
+          ActionType,
+          IsClickedThrough;
+
+PhishEmails
+| join kind=leftouter Urls on NetworkMessageId
+| join kind=leftouter Attachments on NetworkMessageId
+| join kind=leftouter Clicks on NetworkMessageId
+| project EmailTime,
+          ClickTime,
+          SenderFromAddress,
+          SenderMailFromAddress,
+          SenderFromDomain,
+          RecipientEmailAddress,
+          AccountUpn,
+          IPAddress,
+          Subject,
+          DeliveryAction,
+          DeliveryLocation,
+          EmailThreatTypes,
+          AttachmentThreatTypes,
+          DetectionMethods,
+          AuthenticationDetails,
+          Url,
+          UrlDomain,
+          ActionType,
+          IsClickedThrough,
+          FileName,
+          FileType,
+          SHA256,
+          InternetMessageId,
+          NetworkMessageId
+| order by EmailTime desc
+```
