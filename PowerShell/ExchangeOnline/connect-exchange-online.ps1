@@ -1,4 +1,3 @@
-```powershell
 <#
 .SYNOPSIS
 Connects to Exchange Online PowerShell.
