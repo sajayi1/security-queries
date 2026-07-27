@@ -1,0 +1,116 @@
+// Account Compromise - Phase 2: Persistence
+// Purpose: Determine whether the door is still open.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Run each section separately. Replace placeholder values before running.
+//
+// Everything in this file SURVIVES a password reset and session
+// revocation. Revoking a session evicts the attacker; it does not
+// undo anything they configured.
+
+
+// ==========================================================
+// Query 1: Inbox rule created, changed, or deleted
+// Get-InboxRule shows only what exists NOW. A rule created and later
+// deleted leaves nothing in the mailbox - but it is permanent here.
+// Absence of a rule today is NOT evidence none existed yesterday.
+// Set-Mailbox is included on purpose: mailbox-level forwarding is
+// configured separately from inbox rules.
+// ==========================================================
+
+let target = "surname";        // surname, or the part before the @
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where AccountDisplayName has target or AccountId has target
+| where ActionType in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules",
+                       "Remove-InboxRule", "Disable-InboxRule", "Set-Mailbox")
+| project Timestamp,
+          ActionType,
+          AccountDisplayName,
+          IPAddress,
+          ISP,
+          RawEventData
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 2: Read what a rule actually does
+// mv-expand flattens the parameter array into one row each, so
+// nothing gets truncated in the results grid.
+//
+// Read these parameters:
+//   Name                     - a single char / period / gibberish is
+//                              built to vanish in Outlook's rule list
+//   ForwardTo / RedirectTo   - any external address is hostile
+//   DeleteMessage/MoveToFolder - where mail was hidden from the owner
+//   SubjectOrBodyContainsWords - the conditions reveal MOTIVE
+//   AppPoolName              - MSExchangeOwaServerNetCore = created
+//                              from the browser session, not desktop
+//
+// Note: UpdateInboxRules stores detail under OperationProperties,
+// not Parameters, so this mv-expand returns nothing for those rows.
+// Read their RawEventData directly.
+// ==========================================================
+
+let objectid = "00000000-0000-0000-0000-000000000000";
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where ActionType == "New-InboxRule"
+| where AccountObjectId == objectid
+| extend raw = parse_json(RawEventData)
+| mv-expand p = raw.Parameters
+| project Timestamp,
+          IPAddress,
+          ParamName  = tostring(p.Name),
+          ParamValue = tostring(p.Value)
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 3: Forwarding, delegation, and permission changes
+// Delegation is quieter than forwarding and lasts longer. An
+// attacker who grants read access to a mailbox keeps it after every
+// credential in the chain is reset.
+// ==========================================================
+
+let target = "surname";
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("Set-Mailbox", "Add-MailboxPermission", "Add-RecipientPermission",
+                       "Add-MailboxFolderPermission", "Set-MailboxAutoReplyConfiguration",
+                       "New-ManagementRoleAssignment")
+| where RawEventData has target
+| extend raw = parse_json(RawEventData)
+| project Timestamp,
+          ActionType,
+          IPAddress,
+          User   = tostring(raw.UserId),
+          Params = raw.Parameters
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 4: Consent grants and application access
+// Consented applications survive password resets AND session
+// revocation. If the compromise involved Graph-level activity and
+// you have not checked this, you have not contained anything.
+// Before escalating an unfamiliar app GUID, run it unfiltered across
+// the tenant - an identifier that looks unique inside a narrow
+// filter is frequently ubiquitous infrastructure once the filter
+// comes off.
+// ==========================================================
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("Consent to application.", "Add app role assignment grant to user.",
+                       "Add delegated permission grant.", "Add service principal.",
+                       "Add service principal credentials.")
+| extend raw = parse_json(RawEventData)
+| project Timestamp,
+          ActionType,
+          AccountDisplayName,
+          IPAddress,
+          Target = raw.Target
+| sort by Timestamp desc

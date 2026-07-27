@@ -1,0 +1,119 @@
+// Account Compromise - Phase 1: Scope
+// Purpose: Determine how far a confirmed mailbox compromise reached.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Run each section separately. Replace placeholder values before running.
+//
+// Reminder: KQL datetime() literals are ALWAYS UTC, regardless of the
+// timezone your portal displays. Convert your window before running.
+
+
+// ==========================================================
+// Query 1: Everything a compromised mailbox sent
+// Group by subject - a campaign shows as one subject with a huge
+// count next to the user's ordinary mail. Reconcile the recipient
+// count against the list handed to the notification team.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+let t0 = datetime(2026-01-01 00:00);   // UTC
+
+EmailEvents
+| where Timestamp > t0
+| where SenderFromAddress =~ user or SenderMailFromAddress =~ user
+| summarize Messages = count(),
+            Recipients = dcount(RecipientEmailAddress),
+            First = min(Timestamp),
+            Last = max(Timestamp)
+            by Subject
+| sort by Messages desc
+
+
+// ==========================================================
+// Query 2: First appearance of a URL anywhere in the tenant
+// If the earliest hit is the user's OWN outbound message, corporate
+// email is eliminated as the delivery vector - look at web, personal
+// mail, mobile, or the endpoint instead.
+// Note: a redirector, shortener, QR code, or link inside an
+// attachment never lands in EmailUrlInfo. Absence means "not this
+// URL", not "no email".
+// ==========================================================
+
+let baddomain = "suspicious-domain.com";
+
+EmailUrlInfo
+| where Timestamp > ago(30d)
+| where UrlDomain has baddomain
+| join kind=inner EmailEvents on NetworkMessageId
+| project Timestamp,
+          SenderFromAddress,
+          RecipientEmailAddress,
+          Subject,
+          Url
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 3: Who clicked, and who clicked THROUGH the warning
+// IsClickedThrough == true means the user saw the block page and
+// proceeded anyway. Those people go to the top of the call list.
+// Empty result on a known compromise -> check that Safe Links click
+// tracking is enabled and the user is inside the policy scope.
+// ==========================================================
+
+let baddomain = "suspicious-domain.com";
+
+UrlClickEvents
+| where Timestamp > ago(30d)
+| where Url has baddomain
+| project Timestamp,
+          AccountUpn,
+          Url,
+          ActionType,
+          IsClickedThrough,
+          IPAddress
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 4: Recipients OUTSIDE the organization
+// Every row is another org phished from your domain. This goes up
+// the chain, not to the internal notification team - it carries
+// disclosure duties and a sender-reputation cost internal spread
+// does not.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+let orgdomain = "yourdomain.gov";
+
+EmailEvents
+| where Timestamp > ago(30d)
+| where SenderFromAddress =~ user
+| where RecipientEmailAddress !endswith orgdomain
+| project Timestamp,
+          RecipientEmailAddress,
+          Subject,
+          DeliveryAction
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 5: Everything a user received before the incident
+// Hunting for the original lure. A few dozen rows - read them by
+// hand. Look for anything with a link, an attachment, or a sender
+// that does not belong.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+let t0 = datetime(2026-01-01 16:00);   // UTC, first hostile action
+
+EmailEvents
+| where Timestamp between ((t0 - 3d) .. t0)
+| where RecipientEmailAddress =~ user
+| join kind=leftouter EmailUrlInfo on NetworkMessageId
+| project Timestamp,
+          SenderFromAddress,
+          Subject,
+          Url,
+          UrlDomain,
+          DeliveryAction
+| sort by Timestamp asc

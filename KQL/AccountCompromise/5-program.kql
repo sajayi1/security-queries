@@ -1,0 +1,74 @@
+// Account Compromise - Phase 5: Program
+// Purpose: Explain why it was not caught. The findings that change
+//          outcomes usually live here, not in the incident itself.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Run each section separately. Replace placeholder values before running.
+
+
+// ==========================================================
+// Query 1: Every alert ever raised on this account
+// "No alert fired" is THREE different findings with three fixes:
+//   1. the detection did not exist       -> build it
+//   2. it existed but did not match      -> tune it
+//   3. it fired and nobody triaged it    -> fix routing and staffing
+// Never write the phrase without saying which. #3 is the most common
+// and the most expensive to admit.
+// Then filter the Alerts page to status=New, high severity, all
+// users, 90 days. The size of that queue is the real finding -
+// adding detections to a queue nobody reads makes the program worse.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+
+AlertEvidence
+| where Timestamp > ago(60d)
+| where AccountUpn =~ user
+| join kind=inner AlertInfo on AlertId
+| project Timestamp,
+          Title,
+          Severity,
+          Category,
+          ServiceSource,
+          AlertId
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 2: Who changed a security exception, and when
+// Advanced hunting holds EVENTS, not configuration - this is the
+// change history, not the current state. For current state use the
+// Defender portal's threat policies, or Exchange Online PowerShell.
+// Group-based exclusions are the real risk: a policy excluding a
+// named user is a visible decision someone owns; a policy excluding
+// a GROUP grows silently as people are added for unrelated reasons.
+// ==========================================================
+
+CloudAppEvents
+| where Timestamp > ago(180d)
+| where ActionType has_any ("HostedContentFilterPolicy", "SafeLinksPolicy", "SafeLinksRule",
+                            "AntiPhishPolicy", "AntiPhishRule", "SafeAttachmentPolicy",
+                            "TransportRule", "TenantAllowBlockList",
+                            "PhishSimOverride", "SecOpsOverride")
+| project Timestamp,
+          ActionType,
+          AccountDisplayName,
+          IPAddress,
+          RawEventData
+| sort by Timestamp desc
+
+
+// ==========================================================
+// Query 3: Which policies are actually letting mail through
+// A config dump tells you an exception EXISTS. This tells you it is
+// being EXERCISED, by how much mail, and for how many people. An
+// allow-override with thousands of messages behind it is a live
+// hole, not a theoretical one.
+// ==========================================================
+
+EmailEvents
+| where Timestamp > ago(30d)
+| where isnotempty(OrgLevelPolicy) or isnotempty(UserLevelPolicy)
+| summarize Messages = count(),
+            Recipients = dcount(RecipientEmailAddress)
+            by OrgLevelAction, OrgLevelPolicy, UserLevelAction, UserLevelPolicy
+| sort by Messages desc

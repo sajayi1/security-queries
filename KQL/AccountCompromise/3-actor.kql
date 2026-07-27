@@ -1,0 +1,107 @@
+// Account Compromise - Phase 3: Actor
+// Purpose: Separate the intruder's activity from the user's own.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Run each section separately. Replace placeholder values before running.
+//
+// Almost every mistake in this phase comes from skipping the
+// baseline. Establish what is normal for the user before you call
+// anything suspicious.
+
+
+// ==========================================================
+// Query 1: Is this address normal for this user? (baseline)
+// An address spanning weeks is the user's home or office. One that
+// appears cold and burns out inside two days is infrastructure.
+// Residential ISPs are NOT automatically benign - residential proxy
+// services are rented precisely to defeat impossible-travel and
+// hosting-reputation checks.
+//
+// For IPv6: match the /64 prefix, NOT the full address. Residential
+// IPv6 rotates its interface ID on a schedule, so exact matching
+// makes a persistent connection look like a one-day anomaly.
+// Example:  | where IPAddress startswith "2601:1c2:c481:c250"
+// ==========================================================
+
+let target = "surname";
+
+CloudAppEvents
+| where Timestamp > ago(40d)
+| where AccountDisplayName has target
+| summarize Events = count(),
+            First = min(Timestamp),
+            Last = max(Timestamp)
+            by IPAddress, ISP, CountryCode
+| sort by First asc
+
+
+// ==========================================================
+// Query 2: Everything ONE session did
+// The strongest evidence this tooling can produce. If one session ID
+// covers the mailbox reads, the rule creation, and the outbound
+// send, you are no longer inferring a link between them - it is one
+// actor, one session, and the timeline writes itself.
+// Pull the ID from AADSessionId or SessionId inside any confirmed
+// hostile event's RawEventData.
+// ==========================================================
+
+let sessionid = "00000000-0000-0000-0000-000000000000";
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where RawEventData has sessionid
+| project Timestamp,
+          ActionType,
+          AccountDisplayName,
+          IPAddress,
+          RawEventData
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 3: Who else did this infrastructure touch
+// Turns a one-victim incident into a real scope. Group by
+// AccountObjectId, NOT display name - a second compromised account
+// can sit in plain sight behind an application name in the display
+// field.
+// ==========================================================
+
+let prefix = "203.0.113";       // an IPv4 octet boundary or an IPv6 /64
+
+CloudAppEvents
+| where Timestamp > ago(45d)
+| where IPAddress startswith prefix
+| summarize Events = count(),
+            Actions = make_set(ActionType, 25),
+            First = min(Timestamp),
+            Last = max(Timestamp)
+            by AccountObjectId, AccountDisplayName
+| sort by First asc
+
+
+// ==========================================================
+// Query 4: Sign-in reconstruction (establishing T0)
+// If AADSignInEventsBeta is unavailable, use Entra > Users > Sign-in
+// logs, and CHECK THE NON-INTERACTIVE TAB. Token replay after
+// adversary-in-the-middle phishing appears there and the default
+// view hides it.
+// The gap between first hostile sign-in and first hostile action is
+// dwell time. Minutes = automated pipeline; hours/days = someone was
+// reading, and the exposure question becomes primary.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+
+AADSignInEventsBeta
+| where Timestamp > ago(30d)
+| where AccountUpn =~ user
+| project Timestamp,
+          IPAddress,
+          Country,
+          City,
+          ClientAppUsed,
+          Application,
+          ErrorCode,
+          UserAgent,
+          SessionId,
+          RiskLevelDuringSignIn
+| sort by Timestamp asc

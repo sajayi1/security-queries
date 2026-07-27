@@ -1,0 +1,68 @@
+// Account Compromise - Phase 4: Impact
+// Purpose: Decide whether this is an IT cleanup or a notification
+//          obligation.
+// Platform: Microsoft Defender XDR Advanced Hunting
+// Run each section separately. Replace placeholder values before running.
+
+
+// ==========================================================
+// Query 1: What the attacker read
+// Anchor this to confirmed hostile INFRASTRUCTURE, never to the
+// account alone. MailItemsAccessed, Send, and SoftDelete are what
+// every employee generates all day. They describe an attacker only
+// once you have independently established that the actor was one.
+// ==========================================================
+
+let prefix = "203.0.113";
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where IPAddress startswith prefix
+| where ActionType == "MailItemsAccessed"
+| extend raw = parse_json(RawEventData)
+| project Timestamp,
+          Mailbox = tostring(raw.MailboxOwnerUPN),
+          Folders = tostring(raw.Folders),
+          Client  = tostring(raw.ClientInfoString)
+| sort by Timestamp asc
+
+
+// ==========================================================
+// Query 2: Activity profile over the intrusion window
+// Bursts against a flat baseline mark the operational phases.
+// If your maximum sits on the very first bucket, your window starts
+// too late - the peak is off-screen and you are looking at the tail
+// of the event, not the event.
+// ==========================================================
+
+let prefix = "203.0.113";
+
+CloudAppEvents
+| where Timestamp > ago(30d)
+| where IPAddress startswith prefix
+| summarize Events = count() by bin(Timestamp, 1h), ActionType
+| render columnchart
+
+
+// ==========================================================
+// Query 3: Recovering replies the attacker deleted
+// Mail-flow telemetry is OUTSIDE a delete-rule's reach. Everything
+// the attacker deleted from the mailbox is still recorded here.
+// Filtering out auto-replies and bounces leaves human beings who
+// replied to a phishing email - the highest-signal engagement list
+// you will get, and one that is missing from the victim's own
+// mailbox entirely.
+// The auto-replies still earn their keep: an out-of-office firing
+// proves delivery to that mailbox, validating your recipient count.
+// ==========================================================
+
+let user = "user@yourdomain.gov";
+let subject = "the phish subject line";
+
+EmailEvents
+| where Timestamp > ago(30d)
+| where RecipientEmailAddress =~ user
+| where Subject has subject
+| where Subject !startswith "Automatic reply" and Subject !startswith "Undeliverable"
+| distinct SenderFromAddress, Subject, Timestamp
+| sort by Timestamp asc
