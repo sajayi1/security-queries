@@ -1,0 +1,59 @@
+Return-Path: <billing@invoices.example.com>
+Received: from CH2PR11MB5601.namprd11.prod.outlook.com ([2603:10b6:610:5c::7])
+ by CH2PR11MB5601.namprd11.prod.outlook.com with HTTPS; Thu, 30 Jul 2026
+ 11:48:19 +0000
+Received: from NAM10-MW2-obe.outbound.protection.outlook.com (40.107.94.70)
+ by CH2PR11MB5601.outlook.office365.com (10.167.220.31) with Microsoft SMTP
+ Server id 15.20.7784.20 via Frontend Transport; Thu, 30 Jul 2026 11:48:18 +0000
+Received: from relay.example.com (198.51.100.204) by
+ NAM10-MW2-obe.outbound.protection.outlook.com (10.152.36.51) with Microsoft
+ SMTP Server id 15.20.7784.20; Thu, 30 Jul 2026 11:48:16 +0000
+Authentication-Results: spf=softfail (sender IP is 198.51.100.204)
+ smtp.mailfrom=invoices.example.com; dkim=fail (body hash did not verify)
+ header.d=invoices.example.com;
+ dmarc=fail action=quarantine header.from=invoices.example.com;
+ compauth=fail reason=601
+X-Forefront-Antispam-Report: CIP:198.51.100.204;CTRY:NL;LANG:en;SCL:9;SRV:;
+ IPV:NLI;SFV:SPM;H:relay.example.com;PTR:relay.example.com;CAT:HPHSH;SFTY:9.19;
+From: "Accounts Receivable" <billing@invoices.example.com>
+To: accounts.payable@contoso.com
+Subject: Invoice INV-84417 overdue - remittance advice attached
+Date: Thu, 30 Jul 2026 11:48:14 +0000
+Message-ID: <8841720260730@relay.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_boundary_3_84417"
+
+--=_boundary_3_84417
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Invoice INV-84417 is now 14 days overdue.
+
+The remittance advice is attached. Open it and confirm the payment reference
+so we can close the account.
+
+If the attachment does not open, use the secure copy:
+http://198.51.100.204/invoice/84417
+
+Accounts Receivable
+
+--=_boundary_3_84417
+Content-Type: text/html; name="Remittance_Advice_INV-84417.pdf.html"
+Content-Disposition: attachment; filename="Remittance_Advice_INV-84417.pdf.html"
+Content-Transfer-Encoding: base64
+
+PCEtLSBTeW50aGV0aWMgZml4dHVyZSBmb3IgdHJpYWdlLnB5LiBJbmVydDogbm8gc2NyaXB0LCBu
+byBmb3JtLCBubyAtLT4KPCEtLSByZWRpcmVjdC4gQSByZWFsIHNhbXBsZSBvZiB0aGlzIGtpbmQg
+cmVuZGVycyBhIGZha2Ugc2lnbi1pbiBwYWdlLiAtLT4KPGh0bWw+PGJvZHk+PHA+U3ludGhldGlj
+IHRlc3QgZml4dHVyZS4gTm8gYWN0aXZlIGNvbnRlbnQuPC9wPjwvYm9keT48L2h0bWw+Cg==
+
+--=_boundary_3_84417
+Content-Type: application/pdf; name="statement.pdf"
+Content-Disposition: attachment; filename="statement.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBTeW50aGV0aWMgZml4dHVyZSBmb3IgdHJpYWdlLnB5LiBOb3QgYSByZWFsIGRv
+Y3VtZW50LgoxIDAgb2JqPDwvVHlwZS9DYXRhbG9nPj5lbmRvYmoKdHJhaWxlcjw8L1Jvb3QgMSAw
+IFI+PgolJUVPRgo=
+
+--=_boundary_3_84417--

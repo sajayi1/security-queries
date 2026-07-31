@@ -1,10 +1,11 @@
 # Security Queries
 
-This repository contains KQL queries and PowerShell scripts used for security operations, threat hunting, phishing investigation, identity monitoring, endpoint review, and Microsoft 365 security analysis.
+This repository contains KQL queries, PowerShell scripts, and Python tooling used for security operations, threat hunting, phishing investigation, identity monitoring, endpoint review, and Microsoft 365 security analysis.
 
 ## Categories
 
 - Phishing investigation
+- Phishing email triage and IOC extraction (Python)
 - Account compromise hunting (Defender Advanced Hunting)
 - Identity and sign-in analysis
 - Exchange Online forwarding and inbox-rule checks
@@ -23,7 +24,26 @@ KQL/
     5-program.kql                 Why wasn't it caught?
 PowerShell/
   ExchangeOnline/                 Connect, inbox-rule review, forwarding sweeps
+Python/
+  PhishingTriage/                 .eml or hunting export -> IOCs and a hunt
+    triage.py                     Header parsing, spoofing checks, Safe Links
+    README.md                     Usage, safety constraints, limitations
+    samples/                      Synthetic .eml fixtures and a CSV export
 ```
+
+`Python/PhishingTriage` sits in front of the KQL. It takes saved `.eml` files or
+an Advanced Hunting CSV export, unwraps Defender Safe Links back to the true
+destination, extracts the indicators, and generates the query that finds
+everyone else who received the same message — the handoff into `KQL/`.
+
+Three modes: one message, a campaign (several files or a directory), or `--csv`
+straight from a hunting export when you never downloaded the message at all.
+Campaign mode produces the deduplicated recipient list, the delivery breakdown,
+and one query covering the union of every indicator.
+
+Standard library only, so it runs where `pip install` is a ticket. It never
+fetches an extracted URL and never uploads an attachment; see its README for why
+both are enforced in code rather than by convention.
 
 Start with `KQL/AccountCompromise/PLAYBOOK.md`. It covers:
 

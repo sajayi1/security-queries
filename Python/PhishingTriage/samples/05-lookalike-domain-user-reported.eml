@@ -1,0 +1,56 @@
+Return-Path: <marcus.oyelaran@contoso.com>
+Received: from SJ0PR03MB6644.namprd03.prod.outlook.com ([2603:10b6:a03:3d1::6])
+ by SJ0PR03MB6644.namprd03.prod.outlook.com with HTTPS; Fri, 24 Jul 2026
+ 17:41:52 +0000
+Authentication-Results: spf=pass (sender IP is 192.0.2.10)
+ smtp.mailfrom=contoso.com; dkim=pass header.d=contoso.com;
+ dmarc=pass action=none header.from=contoso.com; compauth=pass reason=100
+From: Marcus Oyelaran <marcus.oyelaran@contoso.com>
+To: soc@contoso.com
+Subject: FW: Suspicious email - reporting via add-in
+Date: Fri, 24 Jul 2026 17:41:50 +0000
+Message-ID: <report-2026-07-24-0009@contoso.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_boundary_5_report"
+
+--=_boundary_5_report
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Reporting this - I do not normally get payslip mail at this address and the
+link looked wrong when I hovered it. Original attached.
+
+Marcus
+
+--=_boundary_5_report
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="original.eml"
+
+Return-Path: <no-reply@xn--cntoso-hva.com>
+Received: from mx1.xn--cntoso-hva.com (203.0.113.9) by
+ NAM02-SN1-obe.outbound.protection.outlook.com (10.152.36.51) with Microsoft
+ SMTP Server id 15.20.7784.20; Fri, 24 Jul 2026 17:22:05 +0000
+Authentication-Results: spf=pass (sender IP is 203.0.113.9)
+ smtp.mailfrom=xn--cntoso-hva.com; dkim=pass (signature was verified)
+ header.d=xn--cntoso-hva.com;
+ dmarc=pass action=none header.from=xn--cntoso-hva.com; compauth=pass reason=100
+X-Forefront-Antispam-Report: CIP:203.0.113.9;CTRY:RU;LANG:en;SCL:1;SRV:;
+ IPV:NLI;SFV:NSPM;H:mx1.xn--cntoso-hva.com;PTR:mx1.xn--cntoso-hva.com;CAT:NONE;
+From: "Contoso Payroll" <no-reply@xn--cntoso-hva.com>
+To: marcus.oyelaran@contoso.com
+Subject: Your July payslip is ready to view
+Date: Fri, 24 Jul 2026 17:22:03 +0000
+Message-ID: <payslip-july-2026@xn--cntoso-hva.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+  <body>
+    <p>Your July payslip is available.</p>
+    <p><a href="https://payroll.contoso.com@payslips.example.net/view/7712">View payslip</a></p>
+    <p><a href="https://xn--cntoso-hva.com/payroll/preferences">Update delivery preferences</a></p>
+  </body>
+</html>
+
+--=_boundary_5_report--

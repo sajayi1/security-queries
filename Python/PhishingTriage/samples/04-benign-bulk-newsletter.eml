@@ -1,0 +1,37 @@
+Return-Path: <bounce-88213-avery=contoso.com@mail.example.com>
+Received: from PH7PR15MB5088.namprd15.prod.outlook.com ([2603:10b6:510:1e::8])
+ by PH7PR15MB5088.namprd15.prod.outlook.com with HTTPS; Mon, 27 Jul 2026
+ 06:30:12 +0000
+Received: from NAM02-SN1-obe.outbound.protection.outlook.com (40.107.96.51)
+ by PH7PR15MB5088.outlook.office365.com (10.167.220.31) with Microsoft SMTP
+ Server id 15.20.7784.20 via Frontend Transport; Mon, 27 Jul 2026 06:30:11 +0000
+Received: from o3.mail.example.com (192.0.2.201) by
+ NAM02-SN1-obe.outbound.protection.outlook.com (10.152.36.51) with Microsoft
+ SMTP Server id 15.20.7784.20; Mon, 27 Jul 2026 06:30:09 +0000
+Authentication-Results: spf=pass (sender IP is 192.0.2.201)
+ smtp.mailfrom=mail.example.com; dkim=pass (signature was verified)
+ header.d=news.example.com;
+ dmarc=pass action=none header.from=news.example.com; compauth=pass reason=100
+X-Forefront-Antispam-Report: CIP:192.0.2.201;CTRY:US;LANG:en;SCL:1;SRV:;
+ IPV:NLI;SFV:NSPM;H:o3.mail.example.com;PTR:o3.mail.example.com;CAT:NONE;
+From: "Threat Weekly" <digest@news.example.com>
+To: avery.nakamura@contoso.com
+Subject: Threat Weekly - issue 214
+Date: Mon, 27 Jul 2026 06:30:07 +0000
+Message-ID: <01000198a4c2b1f9-88213@mail.example.com>
+List-Unsubscribe: <https://news.example.com/u/88213>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+  <body>
+    <h1>Threat Weekly &mdash; issue 214</h1>
+    <p>This week: identity attacks against help desks, and what changed in
+       token theft tooling.</p>
+    <p><a href="https://news.example.com/issues/214">Read issue 214</a></p>
+    <p style="font-size:11px">
+      <a href="https://news.example.com/u/88213">Unsubscribe</a>
+    </p>
+  </body>
+</html>

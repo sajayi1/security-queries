@@ -1,0 +1,39 @@
+Return-Path: <d.whitfield@contoso-finance.example.org>
+Received: from DM6PR07MB4102.namprd07.prod.outlook.com ([2603:10b6:5:33::19])
+ by DM6PR07MB4102.namprd07.prod.outlook.com with HTTPS; Wed, 29 Jul 2026
+ 09:14:07 +0000
+Received: from NAM04-BN8-obe.outbound.protection.outlook.com (40.107.220.66)
+ by DM6PR07MB4102.outlook.office365.com (10.167.220.31) with Microsoft SMTP
+ Server id 15.20.7784.20 via Frontend Transport; Wed, 29 Jul 2026 09:14:06 +0000
+Received: from smtp-out-03.example.org (192.0.2.118) by
+ NAM04-BN8-obe.outbound.protection.outlook.com (10.152.36.51) with Microsoft
+ SMTP Server id 15.20.7784.20; Wed, 29 Jul 2026 09:14:04 +0000
+Authentication-Results: spf=pass (sender IP is 192.0.2.118)
+ smtp.mailfrom=contoso-finance.example.org; dkim=pass (signature was verified)
+ header.d=contoso-finance.example.org;
+ dmarc=pass action=none header.from=contoso-finance.example.org;
+ compauth=pass reason=100
+X-Forefront-Antispam-Report: CIP:192.0.2.118;CTRY:US;LANG:en;SCL:1;SRV:;
+ IPV:NLI;SFV:NSPM;H:smtp-out-03.example.org;PTR:smtp-out-03.example.org;
+ CAT:NONE;
+From: "Dana Whitfield <dana.whitfield@contoso.com>" <d.whitfield@contoso-finance.example.org>
+Reply-To: "Dana Whitfield" <dana.w.finance@example.net>
+To: Priya Raghavan <priya.raghavan@contoso.com>
+Subject: Re: vendor payment - updated remittance details
+Date: Wed, 29 Jul 2026 09:14:02 +0000
+Message-ID: <CAF8n2Yq7Kd9wZ0@smtp-out-03.example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Priya,
+
+Following up on the payment we discussed. The vendor has moved banks and the
+remittance details on the original invoice are no longer current. Can you hold
+the transfer until I send the updated account information this afternoon?
+
+Please reply to me directly rather than the ticket - I am out of the office and
+not monitoring the shared queue.
+
+Dana Whitfield
+Director of Finance
