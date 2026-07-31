@@ -15,7 +15,7 @@ This repository contains KQL queries and PowerShell scripts used for security op
 KQL/
   Phishing/                       Email/URL/attachment correlation
   AccountCompromise/              Full mailbox-compromise playbook
-    PLAYBOOK.md                   Method, phase guide, and the ground rules
+    PLAYBOOK.md                   Method, connection guide, scenario router, phases
     1-scope.kql                   How far did it go? Who has to be called?
     2-persistence.kql             Is the door still open after a reset?
     3-actor.kql                   Who, from where, separable from the user?
@@ -25,9 +25,19 @@ PowerShell/
   ExchangeOnline/                 Connect, inbox-rule review, forwarding sweeps
 ```
 
-Start with `KQL/AccountCompromise/PLAYBOOK.md` — it covers the four
-result-invalidating gotchas (UTC literals, 30-day retention, unreliable
-display-name fields, read-only hunting) and the method behind the queries.
+Start with `KQL/AccountCompromise/PLAYBOOK.md`. It covers:
+
+- The four gotchas that silently invalidate results — UTC `datetime()` literals,
+  the 30-day hunting window, unreliable display-name fields, and hunting being
+  read-only.
+- **Which tool answers which question**, with the retention limit on each. KQL
+  tells you what happened; PowerShell tells you what is true right now.
+- **Connecting to Exchange Online, Purview, and Graph** before you hunt, and the
+  role each task requires.
+- **A scenario router** mapping what you are actually holding — a risky sign-in,
+  an inbox rule, external forwarding, an OAuth grant — to the phases it needs and
+  the step most often skipped.
+- The five phases in detail, and six habits that outlast the query syntax.
 
 ## Disclaimer
 
