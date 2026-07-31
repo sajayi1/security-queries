@@ -37,4 +37,5 @@ Thumbs.db
 
 # The synthetic fixtures are the exception — they are safe to publish.
 !Python/PhishingTriage/samples/*.eml
+!Python/PhishingTriage/samples/*.msg
 !Python/PhishingTriage/samples/*.csv

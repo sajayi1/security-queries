@@ -1,11 +1,12 @@
 # Phishing Email Triage
 
-Reads saved `.eml` files or an Advanced Hunting export, reports what is
-observable in them, and generates a Defender Advanced Hunting query built from
-the indicators it found.
+Reads saved messages — `.eml`, Outlook `.msg`, or Defender's password-protected
+ZIP — or an Advanced Hunting export, reports what is observable in them, and
+generates a Defender Advanced Hunting query built from the indicators it found.
 
 ```bash
 python3 triage.py suspicious.eml                    # one message
+python3 triage.py "reported phish.msg"              # Outlook's own format
 python3 triage.py defender-download.zip             # Defender's export, as-is
 python3 triage.py ./incident-4471/                  # a campaign
 python3 triage.py --csv EmailEvents-export.csv      # straight from hunting
@@ -29,13 +30,13 @@ the other forty recipients.
 
 ## Three modes
 
-**One message.** A single `.eml` gives the full per-message report: every
-header, the Received chain, findings with reasoning, and a query scoped to that
-sender.
+**One message.** A single `.eml` or `.msg` gives the full per-message report:
+every header, the Received chain, findings with reasoning, and a query scoped to
+that sender.
 
-**A campaign.** Several `.eml` files, or a directory of them, switch to campaign
-mode — one combined report and one query covering the whole set, instead of N
-reports to merge by hand.
+**A campaign.** Several files, a directory of them, or a multi-message ZIP
+switch to campaign mode — one combined report and one query covering the whole
+set, instead of N reports to merge by hand.
 
 **An Advanced Hunting export.** `--csv` reads the CSV you get from exporting an
 `EmailEvents` query, optionally joined with `EmailUrlInfo` or
@@ -79,10 +80,11 @@ Outlook renders a display name and a clean-looking link, and the `.eml` holds
 the sender address, the authentication results, the routing chain, and the URL
 the link actually points at.
 
-**`.msg` is not `.eml`.** Classic Outlook for Windows saves `.msg` by default —
-dragging a message to the desktop, or File > Save As, both produce it. That is a
-binary OLE compound file, not text. This tool refuses it with a message saying
-so rather than producing garbage from it.
+**`.msg` is Outlook's own format**, and classic Outlook for Windows saves it by
+default — dragging a message to the desktop, or File > Save As, both produce it.
+It is a binary OLE compound file rather than text. This tool reads it directly;
+see [Reading `.msg`](#reading-msg) for what survives the conversion and what
+does not.
 
 Paths that give you an actual `.eml`:
 
@@ -145,7 +147,7 @@ head -20 reported-phish.eml
 ```
 
 Readable `Received:` and `From:` lines mean you are fine. Binary noise means you
-have a `.msg`.
+have a `.msg` — which this tool also reads, so rename it and carry on.
 
 **If the user forwarded the phish as an attachment**, the file you have is their
 forwarding wrapper — their headers, their authentication results, all clean by
@@ -158,6 +160,51 @@ The downloaded `.eml` still contains the attachments. It is inert as long as
 nothing extracts and runs them — this tool only hashes the bytes in memory, and
 never writes them out. Do not double-click the file to "check it," and do not
 unpack attachments from it on your workstation.
+
+## Reading `.msg`
+
+A `.msg` is not a message. It is a *filesystem inside a file* — Microsoft's
+Compound File Binary Format, the same container used for pre-2007 `.doc`/`.xls`
+and MSI installers. Storages are directories, streams are files, and a FAT
+chains each one's sectors together. Reading it means doing what an operating
+system does when it mounts a volume: parse the header, load the allocation
+table, walk the directory tree, follow the chains.
+
+Streams are named after MAPI property tags:
+
+```
+__substg1.0_007D001F
+             ^^^^ ^^^^
+             |    +-- 001F: PT_UNICODE
+             +------- 007D: PR_TRANSPORT_MESSAGE_HEADERS
+```
+
+`007D` is the one that matters, and it is why `.msg` support is not a second
+implementation of anything. Outlook stores **the complete original RFC 822
+header block in it, verbatim** — the Received chain, Authentication-Results,
+Return-Path, the Forefront headers. Pull that stream and the parser already
+written for `.eml` takes over unchanged, so every check downstream sees exactly
+what the sending and receiving servers wrote.
+
+The body and attachments come from their own properties (`1000` plain, `1013`
+HTML, `3701` attachment bytes, `3707` filename) and get reassembled into a
+normal MIME structure.
+
+**What is lost.** Outlook does not keep the original MIME body — it stores
+decoded properties and rebuilds on demand. So transfer encodings and the exact
+ordering of parts do not survive, and the reconstructed `Content-Type` is this
+tool's, not the sender's. None of that affects header analysis, URL extraction,
+Safe Links unwrapping, or attachment hashing. If you need the byte-exact
+original, get the `.eml` from Defender instead.
+
+**Messages that never crossed SMTP** — drafts, internal-only mail — have no
+`007D` at all. Headers are then synthesized from MAPI properties, and the output
+carries an `X-Triage-Note` header saying so. There is no Received chain to
+analyse in that case and the tool does not pretend otherwise.
+
+Attachments that are themselves messages (the reported-phish case, where a user
+forwards the original) are extracted as `message/rfc822`, which the existing
+auto-unwrap then picks up.
 
 ## What it checks
 
@@ -365,7 +412,8 @@ Worth knowing before you trust a clean result:
 - **Received headers below your own boundary are attacker-supplied text** and
   can be fabricated wholesale. The earliest public hop is reported as a lead;
   confirm it against `EmailEvents.SenderIPv4` before it goes in a report.
-- **`.msg` is not supported.** See above.
+- **`.msg` bodies are reconstructed, not original.** Headers are verbatim;
+  the MIME structure around them is rebuilt. See above.
 - **A clean run is not a clean bill of health.** It means these specific checks
   found nothing.
 
@@ -380,6 +428,7 @@ Worth knowing before you trust a clean result:
 | `03-html-attachment-lure.eml` | HTML attachment, double extension, bare-IP URL, `CAT:HPHSH` |
 | `04-benign-bulk-newsletter.eml` | Legitimate mail that trips the Return-Path check and nothing else |
 | `05-lookalike-domain-user-reported.eml` | User-reported wrapper around the real phish, punycode domain, userinfo-before-host URL |
+| `06-outlook-msg-payroll-phish.msg` | OLE compound file parsing, headers recovered from `PR_TRANSPORT_MESSAGE_HEADERS`, Safe Links and an attachment inside a `.msg` |
 
 Plus `hunting-export-EmailEvents.csv` — a five-row Advanced Hunting export
 covering three messages across two senders, with per-recipient Safe Links
@@ -388,6 +437,7 @@ wrappers that collapse to one destination, and a mixed delivery outcome
 
 ```bash
 python3 triage.py samples/01-safelinks-credential-phish.eml   # one message
+python3 triage.py samples/06-outlook-msg-payroll-phish.msg    # .msg parsing
 python3 triage.py samples/                                    # campaign mode
 python3 triage.py --csv samples/hunting-export-EmailEvents.csv
 ```

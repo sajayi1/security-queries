@@ -25,21 +25,26 @@ KQL/
 PowerShell/
   ExchangeOnline/                 Connect, inbox-rule review, forwarding sweeps
 Python/
-  PhishingTriage/                 .eml or hunting export -> IOCs and a hunt
-    triage.py                     Header parsing, spoofing checks, Safe Links
+  PhishingTriage/                 saved message or export -> IOCs and a hunt
+    triage.py                     Headers, spoofing checks, Safe Links, .msg
     README.md                     Usage, safety constraints, limitations
-    samples/                      Synthetic .eml fixtures and a CSV export
+    samples/                      Synthetic .eml/.msg fixtures and a CSV export
 ```
 
-`Python/PhishingTriage` sits in front of the KQL. It takes saved `.eml` files or
-an Advanced Hunting CSV export, unwraps Defender Safe Links back to the true
-destination, extracts the indicators, and generates the query that finds
-everyone else who received the same message — the handoff into `KQL/`.
+`Python/PhishingTriage` sits in front of the KQL. It takes saved messages —
+`.eml`, Outlook `.msg`, or Defender's password-protected ZIP — or an Advanced
+Hunting CSV export, unwraps Defender Safe Links back to the true destination,
+extracts the indicators, and generates the query that finds everyone else who
+received the same message — the handoff into `KQL/`.
 
 Three modes: one message, a campaign (several files or a directory), or `--csv`
 straight from a hunting export when you never downloaded the message at all.
 Campaign mode produces the deduplicated recipient list, the delivery breakdown,
 and one query covering the union of every indicator.
+
+`.msg` is read directly, without a library. Outlook keeps the complete original
+RFC 822 header block in a single MAPI property, so once the OLE compound file is
+parsed the `.eml` path handles the rest unchanged.
 
 Standard library only, so it runs where `pip install` is a ticket. It never
 fetches an extracted URL and never uploads an attachment; see its README for why

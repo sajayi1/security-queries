@@ -37,6 +37,7 @@ import ipaddress
 import json
 import os
 import re
+import struct
 import sys
 import time
 import urllib.error
@@ -476,6 +477,411 @@ def dedupe(values: Sequence[str]) -> List[str]:
 # ======================================================================
 
 
+# ======================================================================
+# Outlook .msg — OLE compound file reader
+#
+# A .msg is not a message, it is a filesystem in a file: the Compound File
+# Binary Format Microsoft also used for pre-2007 .doc/.xls and MSI installers.
+# Storages are directories, streams are files, and a FAT chains the sectors of
+# each one together. Reading it is what an OS does when it mounts a volume.
+#
+# Streams are named after MAPI property tags:
+#
+#     __substg1.0_007D001F
+#                  ^^^^ ^^^^
+#                  |    +-- 001F: PT_UNICODE
+#                  +------- 007D: PR_TRANSPORT_MESSAGE_HEADERS
+#
+# 007D is the one that matters. Outlook stores the complete original RFC 822
+# header block in it, verbatim — Received chain, Authentication-Results,
+# Return-Path, the Forefront headers, all of it. So .msg support is not a
+# second implementation of anything: pull that stream and the parser already
+# written for .eml takes over.
+# ======================================================================
+
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+OLE_MAXREGSECT = 0xFFFFFFFA
+OLE_ENDOFCHAIN = 0xFFFFFFFE
+
+# Guard against a malformed or hostile file steering us into a huge allocation.
+OLE_MAX_SECTORS = 1_000_000
+
+
+@dataclass
+class OleEntry:
+    index: int
+    name: str
+    kind: int  # 1 storage, 2 stream, 5 root
+    start: int
+    size: int
+    left: int
+    right: int
+    child: int
+
+
+class OleFile:
+    """Minimal read-only Compound File Binary Format reader."""
+
+    def __init__(self, data: bytes) -> None:
+        if data[:8] != OLE_MAGIC:
+            raise ValueError("not an OLE compound file")
+        self.data = data
+        self.sector_size = 1 << struct.unpack_from("<H", data, 30)[0]
+        self.mini_sector_size = 1 << struct.unpack_from("<H", data, 32)[0]
+        self.mini_cutoff = struct.unpack_from("<I", data, 56)[0] or 4096
+        first_dir = struct.unpack_from("<I", data, 48)[0]
+        first_minifat = struct.unpack_from("<I", data, 60)[0]
+        first_difat = struct.unpack_from("<I", data, 68)[0]
+        n_fat = struct.unpack_from("<I", data, 44)[0]
+
+        self._fat = self._load_fat(n_fat, first_difat)
+        self._minifat: List[int] = []
+        self.entries: List[OleEntry] = []
+
+        self._load_directory(first_dir)
+        # The root entry doubles as the container for every stream too small to
+        # get its own sector; those live in the mini stream, indexed separately.
+        root = self.entries[0] if self.entries else None
+        self._mini_stream = (
+            self._read_chain(root.start, root.size, mini=False) if root and root.size else b""
+        )
+        if first_minifat <= OLE_MAXREGSECT:
+            blob = self._read_chain(first_minifat, 0, mini=False)
+            self._minifat = list(struct.unpack("<%dI" % (len(blob) // 4), blob[: len(blob) // 4 * 4]))
+
+    # -- low level ------------------------------------------------------
+
+    def _sector(self, n: int) -> bytes:
+        offset = 512 + n * self.sector_size
+        return self.data[offset : offset + self.sector_size]
+
+    def _load_fat(self, n_fat: int, first_difat: int) -> List[int]:
+        difat: List[int] = []
+        for i in range(min(n_fat, 109)):
+            value = struct.unpack_from("<I", self.data, 76 + i * 4)[0]
+            if value <= OLE_MAXREGSECT:
+                difat.append(value)
+
+        # Files with more than 109 FAT sectors continue the DIFAT in its own
+        # sector chain. Rare at .msg sizes, cheap to support.
+        sector = first_difat
+        seen = set()
+        per_sector = self.sector_size // 4
+        while sector <= OLE_MAXREGSECT and sector not in seen and len(difat) < OLE_MAX_SECTORS:
+            seen.add(sector)
+            blob = self._sector(sector)
+            if len(blob) < self.sector_size:
+                break
+            values = struct.unpack("<%dI" % per_sector, blob)
+            for value in values[:-1]:
+                if value <= OLE_MAXREGSECT:
+                    difat.append(value)
+            sector = values[-1]
+
+        fat: List[int] = []
+        for s in difat:
+            blob = self._sector(s)
+            if len(blob) < self.sector_size:
+                break
+            fat.extend(struct.unpack("<%dI" % per_sector, blob))
+        return fat
+
+    def _read_chain(self, start: int, size: int, mini: bool) -> bytes:
+        table = self._minifat if mini else self._fat
+        unit = self.mini_sector_size if mini else self.sector_size
+        chunks: List[bytes] = []
+        node = start
+        seen = set()
+        while node <= OLE_MAXREGSECT and node not in seen and len(chunks) < OLE_MAX_SECTORS:
+            seen.add(node)
+            if mini:
+                offset = node * unit
+                chunks.append(self._mini_stream[offset : offset + unit])
+            else:
+                chunks.append(self._sector(node))
+            node = table[node] if node < len(table) else OLE_ENDOFCHAIN
+        blob = b"".join(chunks)
+        return blob[:size] if size else blob
+
+    def _load_directory(self, first_dir: int) -> None:
+        blob = self._read_chain(first_dir, 0, mini=False)
+        for i in range(len(blob) // 128):
+            entry = blob[i * 128 : (i + 1) * 128]
+            name_len = struct.unpack_from("<H", entry, 64)[0]
+            kind = entry[66]
+            if kind == 0:
+                continue
+            name = entry[: max(0, name_len - 2)].decode("utf-16-le", "replace")
+            self.entries.append(
+                OleEntry(
+                    index=i,
+                    name=name,
+                    kind=kind,
+                    left=struct.unpack_from("<I", entry, 68)[0],
+                    right=struct.unpack_from("<I", entry, 72)[0],
+                    child=struct.unpack_from("<I", entry, 76)[0],
+                    start=struct.unpack_from("<I", entry, 116)[0],
+                    size=struct.unpack_from("<Q", entry, 120)[0],
+                )
+            )
+
+    # -- public ---------------------------------------------------------
+
+    def read(self, entry: OleEntry) -> bytes:
+        if entry.size < self.mini_cutoff and entry.kind != 5:
+            return self._read_chain(entry.start, entry.size, mini=True)
+        return self._read_chain(entry.start, entry.size, mini=False)
+
+    def children(self, entry: OleEntry) -> List[OleEntry]:
+        """Entries directly inside a storage.
+
+        Siblings are held in a red-black tree, so this is an in-order walk
+        rather than a list scan — a flat scan would mix an attachment's streams
+        in with the top-level ones.
+        """
+        by_index = {e.index: e for e in self.entries}
+        out: List[OleEntry] = []
+        seen = set()
+
+        def walk(index: int) -> None:
+            if index > OLE_MAXREGSECT or index in seen or index not in by_index:
+                return
+            seen.add(index)
+            node = by_index[index]
+            walk(node.left)
+            out.append(node)
+            walk(node.right)
+
+        walk(entry.child)
+        return out
+
+    @property
+    def root(self) -> OleEntry:
+        return self.entries[0]
+
+
+# -- MAPI property access ----------------------------------------------
+
+MAPI_TRANSPORT_HEADERS = "007D"
+MAPI_SUBJECT = "0037"
+MAPI_BODY_PLAIN = "1000"
+MAPI_BODY_HTML = "1013"
+MAPI_SENDER_NAME = "0042"
+MAPI_SENDER_SMTP = "5D01"
+MAPI_SENT_REPR_SMTP = "5D02"
+MAPI_SENDER_ADDR = "0C1F"
+MAPI_DISPLAY_TO = "0E04"
+MAPI_ATTACH_LONG_FILENAME = "3707"
+MAPI_ATTACH_FILENAME = "3704"
+MAPI_ATTACH_DATA = "3701"
+MAPI_ATTACH_MIME_TAG = "370E"
+
+
+def _msg_streams(ole: OleFile, storage: OleEntry) -> Dict[str, OleEntry]:
+    return {child.name: child for child in ole.children(storage) if child.kind == 2}
+
+
+def _msg_string(ole: OleFile, streams: Dict[str, OleEntry], tag: str) -> str:
+    """A string property, Unicode form preferred, 8-bit as fallback."""
+    unicode_name = "__substg1.0_%s001F" % tag
+    if unicode_name in streams:
+        return ole.read(streams[unicode_name]).decode("utf-16-le", "replace")
+    ansi_name = "__substg1.0_%s001E" % tag
+    if ansi_name in streams:
+        return ole.read(streams[ansi_name]).decode("cp1252", "replace")
+    return ""
+
+
+def _msg_binary(ole: OleFile, streams: Dict[str, OleEntry], tag: str) -> bytes:
+    name = "__substg1.0_%s0102" % tag
+    return ole.read(streams[name]) if name in streams else b""
+
+
+MIME_STRUCTURAL_HEADERS = {"content-type", "content-transfer-encoding", "mime-version"}
+
+
+def _strip_mime_headers(block: str) -> str:
+    """Drop the headers that describe a MIME body we are about to rebuild.
+
+    Outlook does not keep the original MIME body — it stores decoded properties
+    and reassembles on demand. Keeping the original Content-Type would describe
+    a structure (and a boundary) that no longer exists.
+    """
+    kept: List[str] = []
+    skipping = False
+    for line in block.splitlines():
+        if line[:1] in (" ", "\t"):
+            if not skipping:
+                kept.append(line)
+            continue
+        skipping = line.split(":", 1)[0].strip().lower() in MIME_STRUCTURAL_HEADERS
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept).strip("\n")
+
+
+def msg_to_rfc822(raw: bytes, depth: int = 0) -> bytes:
+    """Rebuild an Outlook .msg as an RFC 822 message.
+
+    Headers come out of PR_TRANSPORT_MESSAGE_HEADERS verbatim, so every header
+    check downstream sees exactly what the sending and receiving servers wrote.
+    The MIME body is rebuilt from the decoded body and attachment properties,
+    because Outlook did not keep the original — that means transfer encodings
+    and exact part ordering are lost. Neither affects header analysis, URL
+    extraction, or attachment hashing.
+    """
+    ole = OleFile(raw)
+    streams = _msg_streams(ole, ole.root)
+
+    header_block = _msg_string(ole, streams, MAPI_TRANSPORT_HEADERS).replace("\r\n", "\n").strip("\n")
+    synthesized = False
+
+    if not header_block:
+        # No transport headers: an internal message, a draft, or something that
+        # never crossed SMTP. Build the minimum from MAPI properties and say so
+        # rather than silently reporting a message with no routing at all.
+        synthesized = True
+        sender = (
+            _msg_string(ole, streams, MAPI_SENT_REPR_SMTP)
+            or _msg_string(ole, streams, MAPI_SENDER_SMTP)
+            or _msg_string(ole, streams, MAPI_SENDER_ADDR)
+        )
+        display = _msg_string(ole, streams, MAPI_SENDER_NAME)
+        lines = []
+        if display or sender:
+            lines.append('From: "%s" <%s>' % (display.replace('"', ""), sender))
+        recipient = _msg_string(ole, streams, MAPI_DISPLAY_TO)
+        if recipient:
+            lines.append("To: %s" % recipient)
+        subject = _msg_string(ole, streams, MAPI_SUBJECT)
+        if subject:
+            lines.append("Subject: %s" % subject)
+        lines.append("X-Triage-Note: headers synthesized from MAPI properties; .msg had no "
+                     "PR_TRANSPORT_MESSAGE_HEADERS")
+        header_block = "\n".join(lines)
+    else:
+        header_block = _strip_mime_headers(header_block)
+
+    plain = _msg_string(ole, streams, MAPI_BODY_PLAIN)
+    html_body = _msg_binary(ole, streams, MAPI_BODY_HTML)
+    if not html_body:
+        html_text = _msg_string(ole, streams, MAPI_BODY_HTML)
+        html_body = html_text.encode("utf-8") if html_text else b""
+
+    # -- attachments --
+    parts: List[bytes] = []
+    for child in ole.children(ole.root):
+        if child.kind != 1 or not child.name.startswith("__attach_version1.0"):
+            continue
+        attach_streams = _msg_streams(ole, child)
+        filename = (
+            _msg_string(ole, attach_streams, MAPI_ATTACH_LONG_FILENAME)
+            or _msg_string(ole, attach_streams, MAPI_ATTACH_FILENAME)
+            or "attachment.bin"
+        )
+        mime_tag = _msg_string(ole, attach_streams, MAPI_ATTACH_MIME_TAG) or "application/octet-stream"
+        payload = _msg_binary(ole, attach_streams, MAPI_ATTACH_DATA)
+
+        if not payload and depth < 3:
+            # attach method 5: the attachment is itself a message, stored as a
+            # storage rather than a stream. This is the reported-phish case —
+            # the user forwarded the original as an attachment.
+            embedded = [
+                sub
+                for sub in ole.children(child)
+                if sub.kind == 1 and sub.name.startswith("__substg1.0_%s000D" % MAPI_ATTACH_DATA)
+            ]
+            if embedded:
+                try:
+                    payload = _rebuild_embedded(ole, embedded[0], depth + 1)
+                    mime_tag = "message/rfc822"
+                    if not filename.lower().endswith(".eml"):
+                        filename = (filename or "attached") + ".eml"
+                except Exception:
+                    payload = b""
+
+        if not payload:
+            continue
+
+        maintype, _, subtype = mime_tag.partition("/")
+        parts.append(
+            b"Content-Type: %s/%s; name=\"%s\"\n"
+            b"Content-Disposition: attachment; filename=\"%s\"\n"
+            b"Content-Transfer-Encoding: base64\n\n%s\n"
+            % (
+                (maintype or "application").encode("ascii", "replace"),
+                (subtype or "octet-stream").encode("ascii", "replace"),
+                filename.encode("utf-8", "replace"),
+                filename.encode("utf-8", "replace"),
+                base64.encodebytes(payload).strip(),
+            )
+        )
+
+    # -- assemble --
+    body_parts: List[bytes] = []
+    if plain:
+        body_parts.append(
+            b"Content-Type: text/plain; charset=\"utf-8\"\n"
+            b"Content-Transfer-Encoding: base64\n\n%s\n"
+            % base64.encodebytes(plain.encode("utf-8")).strip()
+        )
+    if html_body:
+        body_parts.append(
+            b"Content-Type: text/html; charset=\"utf-8\"\n"
+            b"Content-Transfer-Encoding: base64\n\n%s\n"
+            % base64.encodebytes(html_body).strip()
+        )
+    body_parts.extend(parts)
+
+    boundary = "=_triage_%s" % hashlib.sha256(raw[:4096]).hexdigest()[:24]
+    out = header_block.encode("utf-8", "replace")
+    if synthesized:
+        pass
+    out += b"\nMIME-Version: 1.0\n"
+    out += b'Content-Type: multipart/mixed; boundary="%s"\n\n' % boundary.encode("ascii")
+    for part in body_parts:
+        out += b"--%s\n%s" % (boundary.encode("ascii"), part)
+    out += b"--%s--\n" % boundary.encode("ascii")
+    return out
+
+
+def _rebuild_embedded(ole: OleFile, storage: OleEntry, depth: int) -> bytes:
+    """An embedded message shares the outer file's OLE container, so it cannot
+    be handed back to msg_to_rfc822 as bytes. Walk it in place instead."""
+    streams = _msg_streams(ole, storage)
+    header_block = _msg_string(ole, streams, MAPI_TRANSPORT_HEADERS).replace("\r\n", "\n").strip("\n")
+    plain = _msg_string(ole, streams, MAPI_BODY_PLAIN)
+    html_body = _msg_binary(ole, streams, MAPI_BODY_HTML)
+
+    if not header_block:
+        sender = _msg_string(ole, streams, MAPI_SENT_REPR_SMTP) or _msg_string(
+            ole, streams, MAPI_SENDER_ADDR
+        )
+        subject = _msg_string(ole, streams, MAPI_SUBJECT)
+        header_block = "\n".join(
+            filter(None, ["From: %s" % sender if sender else "", "Subject: %s" % subject if subject else ""])
+        )
+    else:
+        header_block = _strip_mime_headers(header_block)
+
+    boundary = "=_triage_embedded_%d" % depth
+    out = header_block.encode("utf-8", "replace")
+    out += b"\nMIME-Version: 1.0\n"
+    out += b'Content-Type: multipart/alternative; boundary="%s"\n\n' % boundary.encode("ascii")
+    if plain:
+        out += b"--%s\nContent-Type: text/plain; charset=\"utf-8\"\n\n%s\n" % (
+            boundary.encode("ascii"),
+            plain.encode("utf-8", "replace"),
+        )
+    if html_body:
+        out += b"--%s\nContent-Type: text/html; charset=\"utf-8\"\n\n%s\n" % (
+            boundary.encode("ascii"),
+            html_body,
+        )
+    out += b"--%s--\n" % boundary.encode("ascii")
+    return out
+
+
 def parse_message_bytes(raw: bytes, label: str = "") -> email.message.Message:
     """Parse raw message bytes.
 
@@ -484,12 +890,15 @@ def parse_message_bytes(raw: bytes, label: str = "") -> email.message.Message:
     file — a message that breaks the strict parser is a message worth looking
     at, not one to skip.
     """
-    if raw[:8].startswith(b"\xd0\xcf\x11\xe0"):
-        raise SystemExit(
-            "%sThis is an Outlook .msg (OLE compound file); triage.py reads .eml.\n"
-            "Use Outlook on the web (... > Download), Outlook for Mac (File > Save As), or the\n"
-            ".eml that Defender's Download email action produces." % (label + ": " if label else "")
-        )
+    if raw[:8] == OLE_MAGIC:
+        try:
+            raw = msg_to_rfc822(raw)
+        except Exception as exc:
+            raise SystemExit(
+                "%scould not read this Outlook .msg: %s\n"
+                "If it opens in Outlook, save it as .eml and try again."
+                % (label + ": " if label else "", exc)
+            )
     if raw[:2] == b"PK":
         raise SystemExit(
             "%sThis is a ZIP, not a message. Pass it directly — triage.py opens Defender's\n"
@@ -1223,6 +1632,16 @@ def check_authentication(t: Triage) -> None:
             "quarantine, the sending domain's own DMARC policy is p=none and the message was "
             "delivered by policy, not by mistake.",
         )
+    if auth.dmarc.startswith("bestguess"):
+        t.add(
+            "medium",
+            "DMARC bestguesspass — the sending domain publishes no DMARC record",
+            "dmarc=%s for %s" % (auth.dmarc, auth.header_from or t.from_domain or "(not recorded)"),
+            "Microsoft found no DMARC record and applied a guessed policy. It reads like a pass and "
+            "is not one: with nothing published, the domain owner has authorised nothing and a "
+            "spoof of that domain fails no check. Treat alignment here as unverified.",
+        )
+
     if auth.compauth == "fail":
         t.add(
             "high",
@@ -2837,10 +3256,10 @@ def expand_inputs(paths: Sequence[str], zip_password: Optional[str]) -> List[Tup
             found = sorted(
                 os.path.join(path, name)
                 for name in os.listdir(path)
-                if name.lower().endswith((".eml", ".zip"))
+                if name.lower().endswith((".eml", ".msg", ".zip"))
             )
             if not found:
-                raise SystemExit("no .eml or .zip files in %s" % path)
+                raise SystemExit("no .eml, .msg or .zip files in %s" % path)
             resolved.extend(expand_inputs(found, zip_password))
         elif os.path.isfile(path):
             if path.lower().endswith(".zip"):
