@@ -56,7 +56,7 @@ CloudAppEvents
 // proves delivery to that mailbox, validating your recipient count.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
+let user = "user@contoso.com";
 let subject = "the phish subject line";
 
 EmailEvents

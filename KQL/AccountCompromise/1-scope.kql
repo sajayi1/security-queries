@@ -14,7 +14,7 @@
 // count against the list handed to the notification team.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
+let user = "user@contoso.com";
 let t0 = datetime(2026-01-01 00:00);   // UTC
 
 EmailEvents
@@ -82,8 +82,8 @@ UrlClickEvents
 // does not.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
-let orgdomain = "yourdomain.gov";
+let user = "user@contoso.com";
+let orgdomain = "contoso.com";
 
 EmailEvents
 | where Timestamp > ago(30d)
@@ -103,7 +103,7 @@ EmailEvents
 // that does not belong.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
+let user = "user@contoso.com";
 let t0 = datetime(2026-01-01 16:00);   // UTC, first hostile action
 
 EmailEvents

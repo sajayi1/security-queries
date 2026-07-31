@@ -18,7 +18,7 @@
 // adding detections to a queue nobody reads makes the program worse.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
+let user = "user@contoso.com";
 
 AlertEvidence
 | where Timestamp > ago(60d)

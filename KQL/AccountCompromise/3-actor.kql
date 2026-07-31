@@ -89,7 +89,7 @@ CloudAppEvents
 // reading, and the exposure question becomes primary.
 // ==========================================================
 
-let user = "user@yourdomain.gov";
+let user = "user@contoso.com";
 
 AADSignInEventsBeta
 | where Timestamp > ago(30d)
