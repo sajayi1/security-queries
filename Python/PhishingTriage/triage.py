@@ -476,26 +476,91 @@ def dedupe(values: Sequence[str]) -> List[str]:
 # ======================================================================
 
 
-def load_message(path: str) -> email.message.Message:
-    """Parse a .eml from disk.
+def parse_message_bytes(raw: bytes, label: str = "") -> email.message.Message:
+    """Parse raw message bytes.
 
     policy.default decodes RFC 2047 headers for us. Real phishing is often
     malformed on purpose, so fall back to compat32 rather than refusing the
     file — a message that breaks the strict parser is a message worth looking
     at, not one to skip.
     """
-    with open(path, "rb") as fh:
-        raw = fh.read()
-    if raw[:8].lower().startswith(b"\xd0\xcf\x11\xe0"):
+    if raw[:8].startswith(b"\xd0\xcf\x11\xe0"):
         raise SystemExit(
-            "This looks like an Outlook .msg (OLE compound file). triage.py reads .eml only.\n"
-            "In Outlook: File > Save As > choose 'Outlook Message Format' won't help — use\n"
-            "'Save as' .eml, or take the .eml the Report Message add-in attaches to its report."
+            "%sThis is an Outlook .msg (OLE compound file); triage.py reads .eml.\n"
+            "Use Outlook on the web (... > Download), Outlook for Mac (File > Save As), or the\n"
+            ".eml that Defender's Download email action produces." % (label + ": " if label else "")
+        )
+    if raw[:2] == b"PK":
+        raise SystemExit(
+            "%sThis is a ZIP, not a message. Pass it directly — triage.py opens Defender's\n"
+            "password-protected download itself: triage.py download.zip --zip-password ..."
+            % (label + ": " if label else "")
         )
     try:
         return email.message_from_bytes(raw, policy=email.policy.default)
     except Exception:
         return email.message_from_bytes(raw, policy=email.policy.compat32)
+
+
+def load_message(path: str) -> email.message.Message:
+    with open(path, "rb") as fh:
+        return parse_message_bytes(fh.read(), os.path.basename(path))
+
+
+def load_zip_messages(path: str, password: Optional[str]) -> List[Tuple[str, bytes]]:
+    """Pull the messages out of Defender's password-protected download.
+
+    Defender's Download email / Download file action does not hand you a bare
+    .eml. It asks for a justification — which is written to the audit log, so
+    write something a reviewer would accept — then a password, and delivers a
+    protected ZIP. The protection is there so the archive survives AV on the way
+    to your workstation and cannot be opened by accident.
+
+    Python's zipfile only decrypts legacy ZipCrypto. If the archive uses AES,
+    stdlib cannot open it at all and there is no way to fix that without a third
+    party package, so say so plainly and let the analyst extract it by hand
+    rather than failing with a stack trace.
+    """
+    import zipfile
+
+    try:
+        archive = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise SystemExit("%s is not a readable ZIP: %s" % (path, exc))
+
+    with archive:
+        members = [
+            info
+            for info in archive.infolist()
+            if not info.is_dir() and not os.path.basename(info.filename).startswith("._")
+        ]
+        if not members:
+            raise SystemExit("%s is empty." % path)
+
+        if password:
+            archive.setpassword(password.encode("utf-8"))
+
+        out: List[Tuple[str, bytes]] = []
+        for info in members:
+            try:
+                out.append((info.filename, archive.read(info)))
+            except RuntimeError as exc:
+                message = str(exc).lower()
+                if "password" in message:
+                    raise SystemExit(
+                        "%s: wrong or missing password for %s.\n"
+                        "Pass --zip-password, or omit it to be prompted without it reaching your "
+                        "shell history." % (path, info.filename)
+                    )
+                raise SystemExit("%s: could not read %s: %s" % (path, info.filename, exc))
+            except NotImplementedError:
+                raise SystemExit(
+                    "%s uses AES encryption, which the standard library cannot decrypt.\n"
+                    "Extract it yourself and point triage.py at the .eml:\n"
+                    "    unzip %s -d ./extracted\n"
+                    "    python3 triage.py ./extracted/" % (path, path)
+                )
+        return out
 
 
 def header(msg: email.message.Message, name: str) -> str:
@@ -2688,8 +2753,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "paths",
         nargs="*",
-        help="one or more .eml files, or a directory of them. More than one input switches to "
-        "campaign mode: one combined report and one query covering the whole set.",
+        help="one or more .eml files, a directory of them, or the password-protected .zip that "
+        "Defender's Download email action produces. More than one message switches to campaign "
+        "mode: one combined report and one query covering the whole set.",
+    )
+    parser.add_argument(
+        "--zip-password",
+        metavar="PW",
+        help="password for a Defender download ZIP. Omit it and you are prompted, which keeps it "
+        "out of your shell history.",
     )
     parser.add_argument(
         "--csv",
@@ -2752,29 +2824,37 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def expand_inputs(paths: Sequence[str]) -> List[str]:
-    """Resolve arguments to .eml files. A directory expands to the .eml files
-    directly inside it, sorted, so `--outdir` output is reproducible."""
-    resolved: List[str] = []
+def expand_inputs(paths: Sequence[str], zip_password: Optional[str]) -> List[Tuple[str, bytes]]:
+    """Resolve arguments to (label, raw message bytes).
+
+    Accepts .eml files, directories of them, and Defender's password-protected
+    ZIP download. Directory listings are sorted so `--outdir` output is
+    reproducible.
+    """
+    resolved: List[Tuple[str, bytes]] = []
     for path in paths:
         if os.path.isdir(path):
             found = sorted(
                 os.path.join(path, name)
                 for name in os.listdir(path)
-                if name.lower().endswith(".eml")
+                if name.lower().endswith((".eml", ".zip"))
             )
             if not found:
-                raise SystemExit("no .eml files in %s" % path)
-            resolved.extend(found)
+                raise SystemExit("no .eml or .zip files in %s" % path)
+            resolved.extend(expand_inputs(found, zip_password))
         elif os.path.isfile(path):
-            resolved.append(path)
+            if path.lower().endswith(".zip"):
+                resolved.extend(load_zip_messages(path, zip_password))
+            else:
+                with open(path, "rb") as fh:
+                    resolved.append((path, fh.read()))
         else:
             raise SystemExit("no such file or directory: %s" % path)
     return resolved
 
 
-def triage_one_file(path: str, unwrap_forwarded: bool) -> Triage:
-    msg = load_message(path)
+def triage_one_file(label: str, raw: bytes, unwrap_forwarded: bool) -> Triage:
+    msg = parse_message_bytes(raw, os.path.basename(label))
     pre_notes: List[str] = []
     if unwrap_forwarded:
         embedded = find_embedded_message(msg)
@@ -2785,7 +2865,7 @@ def triage_one_file(path: str, unwrap_forwarded: bool) -> Triage:
                 "headers, not the sender's. Re-run with --no-unwrap-forwarded to see the wrapper."
             )
             msg = embedded
-    t = triage_message(msg, path)
+    t = triage_message(msg, label)
     t.notes = pre_notes + t.notes
     return t
 
@@ -2813,15 +2893,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         campaign_mode = True
         stem = os.path.splitext(os.path.basename(args.csv))[0]
     else:
-        files = expand_inputs(args.paths)
-        messages = [triage_one_file(path, not args.no_unwrap_forwarded) for path in files]
+        zip_password = args.zip_password
+        if zip_password is None and any(p.lower().endswith(".zip") for p in args.paths):
+            # Prompt rather than take it on the command line, so the password
+            # for an evidence archive does not sit in shell history.
+            import getpass
+
+            zip_password = getpass.getpass("ZIP password (blank if none): ") or None
+
+        files = expand_inputs(args.paths, zip_password)
+        messages = [
+            triage_one_file(label, raw, not args.no_unwrap_forwarded) for label, raw in files
+        ]
         campaign_mode = len(messages) > 1
         source_label = (
-            os.path.basename(files[0])
+            os.path.basename(files[0][0])
             if len(files) == 1
             else "%d messages" % len(files)
         )
-        stem = os.path.splitext(os.path.basename(files[0]))[0] if len(files) == 1 else "campaign"
+        stem = (
+            os.path.splitext(os.path.basename(files[0][0]))[0] if len(files) == 1 else "campaign"
+        )
 
     # ---- analyse -----------------------------------------------------
     if campaign_mode:

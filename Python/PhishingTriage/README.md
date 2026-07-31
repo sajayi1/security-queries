@@ -6,6 +6,7 @@ the indicators it found.
 
 ```bash
 python3 triage.py suspicious.eml                    # one message
+python3 triage.py defender-download.zip             # Defender's export, as-is
 python3 triage.py ./incident-4471/                  # a campaign
 python3 triage.py --csv EmailEvents-export.csv      # straight from hunting
 ```
@@ -87,7 +88,7 @@ Paths that give you an actual `.eml`:
 
 | Source | How |
 |--------|-----|
-| **Defender XDR** (preferred) | Threat Explorer or the Email entity page > **Download email**. Requires the Preview role, which is separate from read-only hunting — check you have it before you need it mid-incident. |
+| **Defender XDR** (preferred) | Threat Explorer or the Email entity page > **Download email**. See below — this does not hand you a bare `.eml`. |
 | **Outlook on the web** | Open the message > `...` > **Download**. |
 | **Outlook for Mac** | Drag to Finder, or File > Save As. |
 | **User-reported via Report Message** | Pull the original from Defender > Actions & submissions > Submissions. |
@@ -98,6 +99,44 @@ received it rather than a copy that has been through a mail client.
 
 Menu wording moves between Outlook builds. Whatever the version, you are looking
 for Download or a Save As that offers `.eml`.
+
+### Defender's download is a password-protected ZIP
+
+The download action does not give you a `.eml`. It opens a dialog asking for two
+things:
+
+- **A reason for the download.** This is written to the audit log. Somebody may
+  read it later to establish why an analyst pulled a user's mail, so write a
+  ticket reference and a sentence, not "test".
+- **A password you create.** The archive comes back encrypted with it.
+
+The encryption is not there to protect the message from you. It stops AV from
+quarantining the archive in transit and stops anyone opening the contents by
+double-clicking. Requiring the Preview role, forcing a justification, and
+encrypting the result are all one control: downloading somebody's mail is a
+privileged act and it is logged.
+
+Point this tool straight at the ZIP:
+
+```bash
+python3 triage.py defender-download.zip
+```
+
+It prompts for the password rather than taking it on the command line, so the
+password for an evidence archive does not end up in your shell history. Use
+`--zip-password` if you are scripting it and accept that trade.
+
+Python's standard library only decrypts legacy ZipCrypto. If your tenant's
+archives use AES, nothing in the standard library can open them — the tool says
+so and tells you to extract by hand:
+
+```bash
+unzip defender-download.zip -d ./extracted
+python3 triage.py ./extracted/
+```
+
+Downloading more than one message gives you an archive of them, which lands in
+campaign mode automatically.
 
 Check you got a good one:
 
