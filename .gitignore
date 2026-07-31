@@ -1,0 +1,40 @@
+# This repository is public. Nothing derived from real mail belongs in it.
+#
+# The sample fixtures under Python/PhishingTriage/samples/ are synthetic and are
+# force-added below. Everything else matching these patterns is assumed to be
+# real evidence and is kept out.
+
+# Saved messages and Defender downloads
+*.eml
+*.msg
+*.zip
+
+# Advanced Hunting exports
+*.csv
+
+# triage.py output
+*-triage.md
+*-iocs.json
+*-hunt.kql
+out/
+output/
+extracted/
+
+# Local scratch
+scratch/
+evidence/
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# The synthetic fixtures are the exception — they are safe to publish.
+!Python/PhishingTriage/samples/*.eml
+!Python/PhishingTriage/samples/*.csv
